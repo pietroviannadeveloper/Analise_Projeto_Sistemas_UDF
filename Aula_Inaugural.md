@@ -101,6 +101,7 @@ _ _ _
 > **Dica:** Cada pessoa pode escolher um problema diferente e criar sua própria versão da tela, deixando os desenhos totalmente diferentes entre si.
 
 
+<img width="3000" height="4000" alt="image" src="https://github.com/user-attachments/assets/c24f8f93-debd-41ec-a875-ce569f8b4ad8" />
 
 
 
