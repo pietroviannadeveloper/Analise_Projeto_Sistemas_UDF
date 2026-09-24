@@ -28,7 +28,7 @@ box(32,11,12,white,0,6,-26);box(33,.7,13,roof,0,11.9,-26);box(32.2,2.2,.2,glass,
 box(7,.12,34,concrete,0,.7,-1);for(let z=-11;z<12;z+=5){box(2.2,.55,.6,navy,-4,.8,z);box(2.2,.55,.6,navy,4,.8,z);}
 for(let i=0;i<40;i++){const side=i%2?-1:1,x=i<24?side*37:side*(4+(i%3)*5),z=i<24?-35+Math.floor(i/2)*6.4:13+(Math.floor((i-24)/6)*4);cylinder(.27,2.5,trunk,x,1.6,z);const g=new THREE.IcosahedronGeometry(1.8+(i%3)*.22,1);geos.push(g);const a=new THREE.Mesh(g,i%3?leaf:leaf2);a.position.set(x,3.5,z);a.scale.y=1.15;a.castShadow=true;scene.add(a);}
 for(const x of [-41,41])for(let z=-38;z<40;z+=7)box(.18,.05,3,white,x,.25,z);for(let x=-35;x<36;x+=7)box(3,.05,.18,white,x,.25,41);
-const car=(color:number)=>{const group=new THREE.Group(),m=mat(color,{metalness:.25,roughness:.35});box(1.75,.65,3.3,m,0,.75,0,group);box(1.55,.7,1.65,glass,0,1.25,-.1,group);box(1.6,.16,1.3,m,0,1.65,-.2,group);for(const x of [-.88,.88])for(const z of [-1,1]){const w=cylinder(.35,.19,rubber,0,0,0,group);w.rotation.z=Math.PI/2;w.position.set(x,.55,z);}box(1.3,.16,.05,lamp,0,.85,1.68,group);scene.add(group);return group;};
+const car=(color:number)=>{const group=new THREE.Group(),m=mat(color,{metalness:.25,roughness:.35});box(1.75,.65,3.3,m,0,.75,0,group);box(1.55,.7,1.65,glass,0,1.25,-.1,group);box(1.6,.16,1.3,m,0,1.65,-.2,group);const wheels:THREE.Mesh[]=[];for(const x of [-.88,.88])for(const z of [-1,1]){const w=cylinder(.35,.19,rubber,0,0,0,group);w.rotation.z=Math.PI/2;w.position.set(x,.55,z);wheels.push(w);}box(1.3,.16,.05,lamp,0,.85,1.68,group);const tail=mat(0x2b0d0f,{emissive:0xff2b2b,emissiveIntensity:0});box(1.3,.16,.05,tail,0,.85,-1.68,group);group.userData.wheels=wheels;group.userData.tail=tail;scene.add(group);return group;};
 const hits:THREE.Object3D[]=[],tiles:THREE.Mesh[]=[],cars:THREE.Group[]=[];initialSpaces.forEach((s,i)=>{const m=mat(0x29b68b,{emissive:0x0c563b,emissiveIntensity:.15}),tile=box(2.85,.09,5.9,m,s.x,.5,s.z);tile.rotation.y=s.rotation;tile.userData.index=i;hits.push(tile);tiles.push(tile);const c=car([0xe7e8ed,0xcedae5,0x263953,0xcc3655,0x75a8b8][i%5]);c.position.set(s.x,.5,s.z);c.rotation.y=s.rotation;c.traverse(o=>{o.userData.index=i;});hits.push(c);cars.push(c);});
 label("A · BLOCO A",-28,5,-30,"#d7193f",12);label("B · BLOCO B",28,5,-30,"#d7193f",12);label("VISITANTES",0,4,39,"#d7193f",13);label("VIA W5 SUL",-43,1,0,"#526079",12);label("VIA W4 SUL",43,1,0,"#526079",12);
 const routeGroup=new THREE.Group();scene.add(routeGroup);const routeMat=mat(0xffd16d,{emissive:0xffbc38,emissiveIntensity:1.3});for(let z=23;z>-17;z-=1.7)box(.48,.1,.9,routeMat,0,.86,z,routeGroup);for(let x=-19;x<0;x+=1.7)box(.9,.1,.48,routeMat,x,.86,23,routeGroup);
@@ -69,17 +69,21 @@ const traffic=(dt:number)=>{
   state.current.onTraffic(s.id,null,arrival?"Veículo chegando":"Saindo da vaga em ré");
  }
  const j=journey,s=state.current.spaces[j.index],c=cars[j.index];
- const curve=j.phase==="road"?j.road:j.maneuver,length=curve.getLength();
- j.distance+=dt*(j.phase==="road"?8:2.3);
- const progress=Math.min(1,j.distance/length),u=j.arrival?progress:1-progress;
+ const curve=j.phase==="road"?j.road:j.maneuver,length=curve.getLength(),rate=j.phase==="road"?8:2.3;
+ j.distance+=dt*rate;
+ const raw=Math.min(1,j.distance/length),eased=raw<.5?4*raw**3:1-(-2*raw+2)**3/2,u=j.arrival?eased:1-eased;
  c.visible=true;c.position.copy(curve.getPointAt(u));
  const tangent=curve.getTangentAt(u);c.rotation.y=Math.atan2(tangent.x,tangent.z)+(j.arrival||j.phase==="maneuver"?0:Math.PI);
- if(progress<1)return;
+ const reversing=!j.arrival&&j.phase==="maneuver";
+ (c.userData.wheels as THREE.Mesh[]).forEach(w=>w.rotateX((reversing?-1:1)*dt*rate/.35));
+ (c.userData.tail as THREE.MeshStandardMaterial).emissiveIntensity=raw>.72?(raw-.72)/.28:0;
+ if(raw<1)return;
  if(j.arrival&&j.phase==="road"){
   j.phase="maneuver";j.distance=0;state.current.onTraffic(s.id,null,"Manobrando para estacionar");
  }else if(!j.arrival&&j.phase==="maneuver"){
   j.phase="road";j.distance=0;state.current.onTraffic(s.id,false,"Vaga liberada · veículo saindo");
  }else{
+  (c.userData.tail as THREE.MeshStandardMaterial).emissiveIntensity=0;
   if(j.arrival){c.position.set(s.x,.5,s.z);c.rotation.y=s.rotation;state.current.onTraffic(s.id,true,"Veículo estacionado");}
   else{c.visible=false;state.current.onTraffic(s.id,null,"Veículo deixou o estacionamento");}
   journey=null;delay=3;
