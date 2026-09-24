@@ -29,7 +29,7 @@ const mat=(c:THREE.ColorRepresentation,opts:THREE.MeshStandardMaterialParameters
 const white=mat(0xe8edf1),navy=mat(0x203853),glass=mat(0x486982,{metalness:.35,roughness:.25}),roof=mat(0xb4c2ce),concrete=mat(0xc7cfd0),asphalt=mat(0x3f4b56),grass=mat(0x749581),red=mat(0xd7193f),trunk=mat(0x796b57),leaf=mat(0x388574),leaf2=mat(0x4e9981),rubber=mat(0x18212b),lamp=mat(0xffedb2,{emissive:0xffd484,emissiveIntensity:0});
 const box=(w:number,h:number,d:number,m:THREE.Material,x:number,y:number,z:number,parent:THREE.Object3D=scene)=>{const g=new THREE.BoxGeometry(w,h,d,Math.max(1,Math.ceil(w/5)),1,Math.max(1,Math.ceil(d/5)));geos.push(g);const a=new THREE.Mesh(g,m);a.position.set(x,y,z);a.castShadow=true;a.receiveShadow=true;parent.add(a);return a;};
 const cylinder=(r:number,h:number,m:THREE.Material,x:number,y:number,z:number,parent:THREE.Object3D=scene)=>{const g=new THREE.CylinderGeometry(r,r,h,10);geos.push(g);const a=new THREE.Mesh(g,m);a.position.set(x,y,z);a.castShadow=true;parent.add(a);return a;};
-const label=(text:string,x:number,y:number,z:number,color="#203853",scale=10)=>{const c=document.createElement("canvas");c.width=512;c.height=128;const ctx=c.getContext("2d")!;ctx.fillStyle="rgba(255,255,255,.95)";ctx.beginPath();ctx.roundRect(4,4,504,120,20);ctx.fill();ctx.fillStyle=color;ctx.font="bold 48px Arial";ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillText(text,256,66);const tx=new THREE.CanvasTexture(c);textures.push(tx);const m=new THREE.SpriteMaterial({map:tx,depthTest:false});mats.push(m);const s=new THREE.Sprite(m);s.position.set(x,y,z);s.scale.set(scale,scale/4,1);scene.add(s);return s;};
+const label=(text:string,x:number,y:number,z:number,color="#203853",scale=10,parent:THREE.Object3D=scene)=>{const c=document.createElement("canvas");c.width=512;c.height=128;const ctx=c.getContext("2d")!;ctx.fillStyle="rgba(255,255,255,.95)";ctx.beginPath();ctx.roundRect(4,4,504,120,20);ctx.fill();ctx.fillStyle=color;ctx.font="bold 48px Arial";ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillText(text,256,66);const tx=new THREE.CanvasTexture(c);textures.push(tx);const m=new THREE.SpriteMaterial({map:tx,depthTest:false});mats.push(m);const s=new THREE.Sprite(m);s.position.set(x,y,z);s.scale.set(scale,scale/4,1);parent.add(s);return s;};
 if(big){
  box(160,2,100,white,0,-1.5,-2);box(158,.5,98,grass,0,-.3,-2);box(150,.25,92,asphalt,0,.05,-2);
  box(16,6,10,white,0,3,-34);box(17,.6,11,roof,0,6.2,-34);box(16.2,1,.2,navy,0,3.6,-28.95);box(5,2.2,.2,glass,0,2.3,-28.9);label("4R",0,10,-34,"#d7193f",9);
@@ -54,6 +54,16 @@ const walkers=[0x3a6ea5,0x8a4b3d,0x4e6b4e,0xb08a2e,0x5b4b7a,0x2e7a7a].map((c,i)=
 const routeGroup=new THREE.Group();scene.add(routeGroup);const routeMat=mat(0xffd16d,{emissive:0xffbc38,emissiveIntensity:1.3});
 if(big){for(let z=31;z>-27;z-=1.7)box(.48,.1,.9,routeMat,0,.86,z,routeGroup);for(let x=-19;x<0;x+=1.7)box(.9,.1,.48,routeMat,x,.86,31,routeGroup);}
 else{for(let z=23;z>-17;z-=1.7)box(.48,.1,.9,routeMat,0,.86,z,routeGroup);for(let x=-19;x<0;x+=1.7)box(.9,.1,.48,routeMat,x,.86,23,routeGroup);}
+// Pontos de atenção: proposta ilustrativa por visibilidade (longe dos postes centrais), não é levantamento de ocorrências reais.
+const attentionGroup=new THREE.Group();scene.add(attentionGroup);let warnMat:THREE.MeshStandardMaterial|null=null;
+if(big){
+ warnMat=mat(0xf59e0b,{emissive:0xb45309,emissiveIntensity:.6,transparent:true,opacity:.32});
+ for(const ax of [-63.5,63.5]){
+  const g=new THREE.CylinderGeometry(11,11,.06,28);geos.push(g);
+  const disc=new THREE.Mesh(g,warnMat);disc.position.set(ax,.3,-1.5);attentionGroup.add(disc);
+  label("PONTO DE ATENÇÃO",ax,7,-1.5,"#b45309",13,attentionGroup);
+ }
+}
 const lights:THREE.PointLight[]=[];const lampX=[-18,18],lampZ=big?[-30,-10,10,30]:[-28,-10,10,20];for(const x of lampX)for(const z of lampZ){cylinder(.12,4,navy,x,2.4,z);box(1.2,.2,.8,lamp,x,4.5,z);const l=new THREE.PointLight(0xffd78a,0,18,1.6);l.position.set(x,4.1,z);scene.add(l);lights.push(l);}
 let targetPos:THREE.Vector3|null=null,targetLook:THREE.Vector3|null=null;
 // One maneuver at a time keeps the narrow access lanes clear.
@@ -118,7 +128,7 @@ api.current={focus:s=>{const[x,z]=sectorTarget(s);targetLook=new THREE.Vector3(x
 const resize=()=>{const w=el.clientWidth,h=el.clientHeight;renderer.setSize(w,h);camera.aspect=w/h;camera.updateProjectionMatrix();};const observer=new ResizeObserver(resize);observer.observe(el);resize();
 const ray=new THREE.Raycaster(),pointer=new THREE.Vector2();let down={x:0,y:0};const pd=(e:PointerEvent)=>{down={x:e.clientX,y:e.clientY};};const pu=(e:PointerEvent)=>{if(Math.hypot(e.clientX-down.x,e.clientY-down.y)>6)return;const r=renderer.domElement.getBoundingClientRect();pointer.set((e.clientX-r.left)/r.width*2-1,-(e.clientY-r.top)/r.height*2+1);ray.setFromCamera(pointer,camera);const h=ray.intersectObjects(hits,true).find(h=>h.object.parent?.visible!==false&&h.object.visible);if(h)state.current.onSpace(state.current.spaces[h.object.userData.index]);};renderer.domElement.addEventListener("pointerdown",pd);renderer.domElement.addEventListener("pointerup",pu);
 let frame=0,last=0,lastDraw=0;const reduced=matchMedia("(prefers-reduced-motion: reduce)").matches;
-const render=(time:number)=>{const dt=Math.min((time-last)/1000,.05);last=time;const p=state.current;hemi.intensity=THREE.MathUtils.lerp(hemi.intensity,p.night?.6:2.6,.04);sun.intensity=THREE.MathUtils.lerp(sun.intensity,p.night?.3:3.4,.04);lamp.emissiveIntensity=p.night?3:0;lights.forEach(l=>{l.intensity=p.night?35:0;});routeGroup.visible=p.route;routeMat.emissiveIntensity=1.1+Math.sin(time*.002)*.3;
+const render=(time:number)=>{const dt=Math.min((time-last)/1000,.05);last=time;const p=state.current;hemi.intensity=THREE.MathUtils.lerp(hemi.intensity,p.night?.6:2.6,.04);sun.intensity=THREE.MathUtils.lerp(sun.intensity,p.night?.3:3.4,.04);lamp.emissiveIntensity=p.night?3:0;lights.forEach(l=>{l.intensity=p.night?35:0;});routeGroup.visible=p.route;routeMat.emissiveIntensity=1.1+Math.sin(time*.002)*.3;attentionGroup.visible=p.route;if(warnMat)warnMat.emissiveIntensity=(p.night?1.3:.55)+Math.sin(time*.0025)*.25;
 const palette=p.colorblind?{occupied:0xe69f00,accessible:0xcc79a7,free:0x56b4e9}:{occupied:0xcb6671,accessible:0x5498ec,free:0x35b88d};
 const glow=p.colorblind?{occupied:0x7a4f00,accessible:0x5c2f52,free:0x0b4a72}:{occupied:0x501725,accessible:0x163b83,free:0x085b40};
 tiles.forEach((t,i)=>{const s=p.spaces[i],m=t.material as THREE.MeshStandardMaterial,key=s.occupied?"occupied":s.accessible?"accessible":"free";m.color.setHex(palette[key]);m.emissive.setHex(glow[key]);m.emissiveIntensity=p.night?.6:.12;m.opacity=p.selected&&p.selected!==s.sector?.38:1;m.transparent=true;if(journey?.index!==i)cars[i].visible=s.occupied;});
