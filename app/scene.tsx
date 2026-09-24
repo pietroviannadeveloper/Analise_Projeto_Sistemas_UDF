@@ -4,9 +4,9 @@ import * as THREE from "three";
 import {OrbitControls} from "three/addons/controls/OrbitControls.js";
 import {SoftwareRenderer} from "./software-renderer";
 export type Space={id:string;sector:string;x:number;z:number;occupied:boolean;accessible:boolean;rotation:number};
-export const initialSpaces:Space[]=["A","B","V"].flatMap((sector,si)=>Array.from({length:24},(_,i)=>({id:`${sector}-${String(i+1).padStart(2,"0")}`,sector,x:si===0?-30+(i%2)*7:si===1?23+(i%2)*7:-19+(i%12)*3.45,z:si<2?-24+Math.floor(i/2)*4.1:27+Math.floor(i/12)*8,occupied:i>=[18,16,8][si],accessible:i<2,rotation:si<2?Math.PI/2:0})));
+export const initialSpaces:Space[]=["A","B","V"].flatMap((sector,si)=>Array.from({length:24},(_,i)=>({id:`${sector}-${String(i+1).padStart(2,"0")}`,sector,x:si===0?-32+(i%2)*9:si===1?23+(i%2)*9:-19+(i%12)*3.45,z:si<2?-24+Math.floor(i/2)*4.1:27+Math.floor(i/12)*8,occupied:i>=[18,16,8][si],accessible:i<2,rotation:si<2?(i%2===0?-Math.PI/2:Math.PI/2):(i<12?Math.PI:0)})));
 export type CampusHandle={focus:(s:string)=>void;zoom:(f:number)=>void};
-type Props={night:boolean;playing:boolean;tour:boolean;route:boolean;spaces:Space[];selected:string;onSpace:(s:Space)=>void};
+type Props={night:boolean;playing:boolean;tour:boolean;route:boolean;spaces:Space[];selected:string;onTraffic:(id:string,occupied:boolean|null,message:string)=>void;onSpace:(s:Space)=>void};
 const Campus=forwardRef<CampusHandle,Props>(function Campus(props,ref){
 const host=useRef<HTMLDivElement>(null),state=useRef(props),api=useRef<CampusHandle|null>(null);state.current=props;
 const [error,setError]=useState(false),[ready,setReady]=useState(false);
@@ -33,14 +33,67 @@ const hits:THREE.Object3D[]=[],tiles:THREE.Mesh[]=[],cars:THREE.Group[]=[];initi
 label("A · BLOCO A",-28,5,-30,"#d7193f",12);label("B · BLOCO B",28,5,-30,"#d7193f",12);label("VISITANTES",0,4,39,"#d7193f",13);label("VIA W5 SUL",-43,1,0,"#526079",12);label("VIA W4 SUL",43,1,0,"#526079",12);
 const routeGroup=new THREE.Group();scene.add(routeGroup);const routeMat=mat(0xffd16d,{emissive:0xffbc38,emissiveIntensity:1.3});for(let z=23;z>-17;z-=1.7)box(.48,.1,.9,routeMat,0,.86,z,routeGroup);for(let x=-19;x<0;x+=1.7)box(.9,.1,.48,routeMat,x,.86,23,routeGroup);
 const lights:THREE.PointLight[]=[];for(const x of [-18,18])for(const z of [-28,-10,10,20]){cylinder(.12,4,navy,x,2.4,z);box(1.2,.2,.8,lamp,x,4.5,z);const l=new THREE.PointLight(0xffd78a,0,18,1.6);l.position.set(x,4.1,z);scene.add(l);lights.push(l);}
-const mover=car(0xd7193f),mover2=car(0xf5f5ed);let motion=0,targetPos:THREE.Vector3|null=null,targetLook:THREE.Vector3|null=null;
+let targetPos:THREE.Vector3|null=null,targetLook:THREE.Vector3|null=null;
+// One maneuver at a time keeps the narrow access lanes clear.
+const v=(x:number,z:number)=>new THREE.Vector3(x,.5,z);
+const roadCurve=(points:THREE.Vector3[])=>{
+ const path=new THREE.CurvePath<THREE.Vector3>();let previous=points[0];
+ for(let i=1;i<points.length-1;i++){
+  const corner=points[i],before=points[i-1],after=points[i+1];
+  const radius=Math.min(1.5,corner.distanceTo(before)/3,corner.distanceTo(after)/3);
+  const entry=corner.clone().add(before.clone().sub(corner).normalize().multiplyScalar(radius));
+  const exit=corner.clone().add(after.clone().sub(corner).normalize().multiplyScalar(radius));
+  path.add(new THREE.LineCurve3(previous,entry));path.add(new THREE.QuadraticBezierCurve3(entry,corner,exit));previous=exit;
+ }
+ path.add(new THREE.LineCurve3(previous,points[points.length-1]));return path;
+};
+const paths=(s:Space)=>{
+ const side=s.sector!=="V",lane=s.sector==="A"?-27.5:27.5;
+ const start=side?v(lane,s.z+3):v(s.x+3,31);
+ const road=roadCurve(side?[v(41,40),v(lane,40),start]:[v(41,40),v(27.5,40),v(27.5,31),start]);
+ const end=v(s.x,s.z),front=new THREE.Vector3(Math.sin(s.rotation),0,Math.cos(s.rotation));
+ const maneuver=new THREE.CubicBezierCurve3(start,side?v(lane,s.z):v(s.x,31),end.clone().addScaledVector(front,-2),end);
+ return {road,maneuver};
+};
+type Journey={index:number;arrival:boolean;phase:"road"|"maneuver";distance:number;road:THREE.CurvePath<THREE.Vector3>;maneuver:THREE.CubicBezierCurve3};
+let journey:Journey|null=null,delay=1,sequence=0;
+const traffic=(dt:number)=>{
+ if(!state.current.playing)return;
+ if(!journey){
+  delay-=dt;if(delay>0)return;
+  const arrival=sequence%2===0,sector=["V","V","A","A","B","B"][sequence%6];
+  const available=state.current.spaces.map((s,index)=>({s,index})).filter(({s})=>s.sector===sector&&s.occupied!==arrival&&!s.accessible);
+  sequence++;if(!available.length){delay=2;return;}
+  const {s,index}=available[(sequence*5)%available.length];
+  journey={index,arrival,phase:arrival?"road":"maneuver",distance:0,...paths(s)};
+  state.current.onTraffic(s.id,null,arrival?"Veículo chegando":"Saindo da vaga em ré");
+ }
+ const j=journey,s=state.current.spaces[j.index],c=cars[j.index];
+ const curve=j.phase==="road"?j.road:j.maneuver,length=curve.getLength();
+ j.distance+=dt*(j.phase==="road"?8:2.3);
+ const progress=Math.min(1,j.distance/length),u=j.arrival?progress:1-progress;
+ c.visible=true;c.position.copy(curve.getPointAt(u));
+ const tangent=curve.getTangentAt(u);c.rotation.y=Math.atan2(tangent.x,tangent.z)+(j.arrival||j.phase==="maneuver"?0:Math.PI);
+ if(progress<1)return;
+ if(j.arrival&&j.phase==="road"){
+  j.phase="maneuver";j.distance=0;state.current.onTraffic(s.id,null,"Manobrando para estacionar");
+ }else if(!j.arrival&&j.phase==="maneuver"){
+  j.phase="road";j.distance=0;state.current.onTraffic(s.id,false,"Vaga liberada · veículo saindo");
+ }else{
+  if(j.arrival){c.position.set(s.x,.5,s.z);c.rotation.y=s.rotation;state.current.onTraffic(s.id,true,"Veículo estacionado");}
+  else{c.visible=false;state.current.onTraffic(s.id,null,"Veículo deixou o estacionamento");}
+  journey=null;delay=3;
+ }
+};
 api.current={focus:s=>{const x=s==="A"?-24:s==="B"?24:0,z=s==="V"?26:0;targetLook=new THREE.Vector3(x,0,z);targetPos=s?new THREE.Vector3(x+42,64,z+64):new THREE.Vector3(102,108,130);},zoom:f=>{camera.position.sub(controls.target).multiplyScalar(f).add(controls.target);controls.update();}};controls.addEventListener("start",()=>{targetPos=null;targetLook=null;});
 const resize=()=>{const w=el.clientWidth,h=el.clientHeight;renderer.setSize(w,h);camera.aspect=w/h;camera.updateProjectionMatrix();};const observer=new ResizeObserver(resize);observer.observe(el);resize();
 const ray=new THREE.Raycaster(),pointer=new THREE.Vector2();let down={x:0,y:0};const pd=(e:PointerEvent)=>{down={x:e.clientX,y:e.clientY};};const pu=(e:PointerEvent)=>{if(Math.hypot(e.clientX-down.x,e.clientY-down.y)>6)return;const r=renderer.domElement.getBoundingClientRect();pointer.set((e.clientX-r.left)/r.width*2-1,-(e.clientY-r.top)/r.height*2+1);ray.setFromCamera(pointer,camera);const h=ray.intersectObjects(hits,true).find(h=>h.object.parent?.visible!==false&&h.object.visible);if(h)state.current.onSpace(state.current.spaces[h.object.userData.index]);};renderer.domElement.addEventListener("pointerdown",pd);renderer.domElement.addEventListener("pointerup",pu);
 let frame=0,last=0,lastDraw=0;const reduced=matchMedia("(prefers-reduced-motion: reduce)").matches;
 const render=(time:number)=>{const dt=Math.min((time-last)/1000,.05);last=time;const p=state.current;hemi.intensity=THREE.MathUtils.lerp(hemi.intensity,p.night?.6:2.6,.04);sun.intensity=THREE.MathUtils.lerp(sun.intensity,p.night?.3:3.4,.04);lamp.emissiveIntensity=p.night?3:0;lights.forEach(l=>{l.intensity=p.night?35:0;});routeGroup.visible=p.route;routeMat.emissiveIntensity=1.1+Math.sin(time*.002)*.3;
-tiles.forEach((t,i)=>{const s=p.spaces[i],m=t.material as THREE.MeshStandardMaterial;m.color.setHex(s.occupied?0xcb6671:s.accessible?0x5498ec:0x35b88d);m.emissive.setHex(s.occupied?0x501725:s.accessible?0x163b83:0x085b40);m.emissiveIntensity=p.night?.6:.12;m.opacity=p.selected&&p.selected!==s.sector?.38:1;m.transparent=true;cars[i].visible=s.occupied;});
-if(p.playing&&!reduced)motion+=dt*5;[mover,mover2].forEach((c,i)=>{const d=(motion+i*130)%324;if(d<80){c.position.set(-41,.3,-40+d);c.rotation.y=0;}else if(d<162){c.position.set(-41+d-80,.3,40);c.rotation.y=Math.PI/2;}else if(d<242){c.position.set(41,.3,40-(d-162));c.rotation.y=Math.PI;}else{c.position.set(41-(d-242),.3,-40);c.rotation.y=-Math.PI/2;}});
+tiles.forEach((t,i)=>{const s=p.spaces[i],m=t.material as THREE.MeshStandardMaterial;m.color.setHex(s.occupied?0xcb6671:s.accessible?0x5498ec:0x35b88d);m.emissive.setHex(s.occupied?0x501725:s.accessible?0x163b83:0x085b40);m.emissiveIntensity=p.night?.6:.12;m.opacity=p.selected&&p.selected!==s.sector?.38:1;m.transparent=true;if(journey?.index!==i)cars[i].visible=s.occupied;});
+if(!reduced)traffic(dt);
+else if(p.playing){delay-=dt;if(delay<=0){const i=(sequence++*17+5)%p.spaces.length,s=p.spaces[i];state.current.onTraffic(s.id,!s.occupied,s.occupied?"Vaga liberada":"Veículo estacionado");delay=8.5;}}
+
 if(targetPos&&targetLook){camera.position.lerp(targetPos,reduced?1:.06);controls.target.lerp(targetLook,reduced?1:.06);if(camera.position.distanceTo(targetPos)<.08){targetPos=null;targetLook=null;}}controls.autoRotate=p.tour&&!reduced;controls.update(dt);if(!software||time-lastDraw>45){renderer.render(scene,camera);lastDraw=time;}frame=requestAnimationFrame(render);};frame=requestAnimationFrame(render);setReady(true);
 const loss=(e:Event)=>{e.preventDefault();setError(true);};renderer.domElement.addEventListener("webglcontextlost",loss);
 return()=>{cancelAnimationFrame(frame);observer.disconnect();controls.dispose();renderer.dispose();geos.forEach(g=>g.dispose());mats.forEach(m=>m.dispose());textures.forEach(t=>t.dispose());renderer.domElement.remove();api.current=null;};},[]);
